@@ -8,6 +8,7 @@
 
 #define DEVICE_PATH "/dev/xiaomi-touch"
 
+//#define TOUCH_ID 0
 #define Touch_Game_Mode 0
 #define Touch_Active_MODE 1
 #define Touch_UP_THRESHOLD 2
@@ -69,6 +70,7 @@ int main(int argc, char *argv[]) {
 
 	int TOUCH_IOC_SETMODE = TOUCH_MAGIC + mode_cmd;
     int fd = open(DEVICE_PATH, O_RDWR);
+	//int arg[3] = { TOUCH_ID , mode , value };
 	int arg[2] = { mode , value };
     if (fd < 0) {
         perror("Failed to open device file");
