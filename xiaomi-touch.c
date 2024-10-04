@@ -46,13 +46,13 @@ int main(int argc, char *argv[]) {
 
     if (strcmp(argv[1], "--enable") == 0) {
 		if (mode == 2)
-			value = 4;
+			value = 5;
 		else if (mode == 3)
-			value = 4;
+			value = 5;
 		else if (mode == 4)
-			value = 4;
+			value = 5;
 		else if (mode == 5)
-			value = 4;
+			value = 5;
 		else
 			value = 1;		
 
