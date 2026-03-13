@@ -20,6 +20,18 @@ path = "src/bin/v2.rs"
 name = "xiaomi-touch-v3"
 path = "src/bin/v3.rs"
 
+[[bin]]
+name = "gamemode-daemon-v1"
+path = "src/bin/gamemode_daemon_v1.rs"
+
+[[bin]]
+name = "gamemode-daemon-v2"
+path = "src/bin/gamemode_daemon_v2.rs"
+
+[[bin]]
+name = "gamemode-daemon-v3"
+path = "src/bin/gamemode_daemon_v3.rs"
+
 [profile.release]
 strip = true
 lto = true

@@ -470,3 +470,182 @@ pub fn run_cli(protocol: impl TouchIoctlProtocol) {
         }
     }
 }
+
+// ─── Gamemode Daemon (shared) ─────────────────────────────────────────────────
+
+pub const GAMEMODE_CONFIG_PATH: &str = "/data/oofcontrol/gamemode.txt";
+pub const GAMEMODE_DEFAULT_POLL_MS: u64 = 500;
+pub const MODE_GRIP_LONG_ID: u16 = 15;
+pub const MODE_GAME_MODE_ID: u16 = 0;
+
+/// Parsed representation of /data/oofcontrol/gamemode.txt
+#[derive(Debug, Clone)]
+pub struct GamemodeConfig {
+    /// (mode_id, value) pairs for SET_CUR_VALUE
+    pub modes: Vec<(u16, i32)>,
+    /// Optional 96-element grip array for SET_LONG_VALUE on mode 15
+    pub grip: Option<Vec<i32>>,
+}
+
+pub fn parse_gamemode_config(content: &str) -> Result<GamemodeConfig, String> {
+    let mut modes = Vec::new();
+    let mut grip: Option<Vec<i32>> = None;
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') { continue; }
+
+        let mut parts = line.splitn(2, ' ');
+        let mode_str = parts.next().unwrap_or("").trim();
+        let val_str  = parts.next().unwrap_or("").trim();
+
+        let mode: u16 = mode_str.parse()
+            .map_err(|_| format!("bad mode id '{}'", mode_str))?;
+
+        if mode == MODE_GRIP_LONG_ID {
+            let vals: Result<Vec<i32>, _> = val_str.split(',')
+                .map(|s| s.trim().parse::<i32>())
+                .collect();
+            grip = Some(vals.map_err(|_| format!("bad grip values: '{}'", val_str))?);
+        } else {
+            let value: i32 = val_str.parse()
+                .map_err(|_| format!("bad value '{}' for mode {}", val_str, mode))?;
+            modes.push((mode, value));
+        }
+    }
+
+    Ok(GamemodeConfig { modes, grip })
+}
+
+/// Apply a parsed config to the device via the given protocol.
+pub fn apply_gamemode_config<P: TouchIoctlProtocol>(
+    protocol: &P,
+    fd: i32,
+    touch_id: u32,
+    cfg: &GamemodeConfig,
+) {
+    // Game-mode OFF: just reset
+    if let Some(&(_, val)) = cfg.modes.iter().find(|&&(m, _)| m == MODE_GAME_MODE_ID) {
+        if val == 0 {
+            eprintln!("[gamemode-daemon] game-mode OFF -> resetting");
+            if let Err(e) = protocol.reset(fd, touch_id, MODE_GAME_MODE_ID) {
+                eprintln!("[gamemode-daemon] reset error: {}", e);
+            }
+            return;
+        }
+    }
+
+    // Apply grip zone before enabling game mode (kernel requires this order)
+    if let Some(ref g) = cfg.grip {
+        eprintln!("[gamemode-daemon] applying grip zone ({} values)", g.len());
+        if let Err(e) = protocol.set_long(fd, touch_id, MODE_GRIP_LONG_ID, g) {
+            eprintln!("[gamemode-daemon] grip error: {}", e);
+        }
+    }
+
+    // Apply all mode params in order
+    for &(mode, value) in &cfg.modes {
+        eprintln!("[gamemode-daemon] set mode={} value={}", mode, value);
+        if let Err(e) = protocol.set(fd, touch_id, mode, value) {
+            eprintln!("[gamemode-daemon] set error (mode={}): {}", mode, e);
+        }
+    }
+}
+
+/// Main polling loop — call from each variant's main().
+pub fn run_gamemode_watcher<P: TouchIoctlProtocol>(
+    protocol: &P,
+    touch_id: u32,
+    config_path: &str,
+    poll_ms: u64,
+) {
+    use std::time::Duration;
+    use std::thread;
+    use std::fs;
+
+    let poll_dur = Duration::from_millis(poll_ms);
+    let mut last_mtime: Option<std::time::SystemTime> = None;
+    let mut last_content: Option<String> = None;
+
+    eprintln!("[gamemode-daemon] watching '{}' every {}ms (touch_id={})", config_path, poll_ms, touch_id);
+
+    loop {
+        let current_mtime = fs::metadata(config_path).ok().and_then(|m| m.modified().ok());
+
+        let changed = match (current_mtime, last_mtime) {
+            (Some(c), Some(l)) => c != l,
+            (Some(_), None)    => true,
+            _                  => false,
+        };
+
+        if changed {
+            last_mtime = current_mtime;
+
+            match fs::read_to_string(config_path) {
+                Err(e) => eprintln!("[gamemode-daemon] read error: {}", e),
+                Ok(content) => {
+                    if last_content.as_deref() == Some(&content) {
+                        thread::sleep(poll_dur);
+                        continue;
+                    }
+                    last_content = Some(content.clone());
+                    eprintln!("[gamemode-daemon] config changed, parsing...");
+
+                    match parse_gamemode_config(&content) {
+                        Err(e) => eprintln!("[gamemode-daemon] parse error: {}", e),
+                        Ok(cfg) => {
+                            let dev_node = "/dev/xiaomi-touch\0";
+                            let fd = unsafe { sys::open(dev_node.as_ptr(), 2 /* O_RDWR */) };
+                            if fd < 0 {
+                                eprintln!("[gamemode-daemon] open error errno={}", errno());
+                            } else {
+                                apply_gamemode_config(protocol, fd, touch_id, &cfg);
+                                unsafe { sys::close(fd); }
+                                eprintln!("[gamemode-daemon] applied OK");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        thread::sleep(poll_dur);
+    }
+}
+
+/// Parse common daemon CLI flags. Returns (touch_id, config_path, poll_ms).
+pub fn parse_daemon_args(default_config: &str) -> (u32, String, u64) {
+    let args: Vec<String> = std::env::args().collect();
+    let (bin, default_cfg) = (args[0].clone(), default_config.to_string());
+    let mut touch_id: u32  = 0;
+    let mut config_path    = default_cfg.clone();
+    let mut poll_ms: u64   = GAMEMODE_DEFAULT_POLL_MS;
+    let mut i = 1;
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "--touch-id" => {
+                i += 1;
+                touch_id = args.get(i).and_then(|s| s.parse().ok())
+                    .unwrap_or_else(|| { eprintln!("--touch-id needs an integer"); std::process::exit(1) });
+            }
+            "--file" => {
+                i += 1;
+                config_path = args.get(i).cloned()
+                    .unwrap_or_else(|| { eprintln!("--file needs a path"); std::process::exit(1) });
+            }
+            "--poll-ms" => {
+                i += 1;
+                poll_ms = args.get(i).and_then(|s| s.parse().ok())
+                    .unwrap_or_else(|| { eprintln!("--poll-ms needs an integer"); std::process::exit(1) });
+            }
+            "--help" | "-h" => {
+                eprintln!("{bin} -- OOFControl gamemode file watcher\n\nOptions:\n  --touch-id N   Panel index (default: 0)\n  --file PATH    Config file (default: {default_cfg})\n  --poll-ms N    Poll interval ms (default: {GAMEMODE_DEFAULT_POLL_MS})\n  -h/--help      Show this help");
+                std::process::exit(0);
+            }
+            other => { eprintln!("unknown argument '{other}'"); std::process::exit(1); }
+        }
+        i += 1;
+    }
+    (touch_id, config_path, poll_ms)
+}
