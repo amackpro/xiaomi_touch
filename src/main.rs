@@ -91,11 +91,12 @@ fn parse_mode(s: &str) -> Result<u16, String> {
         "debug-level"                   => Ok(18),
         "power-status"                  => Ok(19),
         "pen"                           => Ok(20),
+        "mode-num"                      => Ok(21),
         _ => Err(format!(
-            "unknown mode '{}' — use an integer (0-20) or: \
+            "unknown mode '{}' — use an integer (0-21) or: \
              game active up-threshold tolerance aim tap expert edge \
              orientation rate fod aod resist-rf idle-time doubletap \
-             grip fod-icon nonui debug-level power-status pen", s
+             grip fod-icon nonui debug-level power-status pen mode-num", s
         )),
     }
 }
@@ -112,7 +113,8 @@ fn mode_name(n: u16) -> &'static str {
         14 => "doubletap",       15 => "grip-mode",
         16 => "fod-icon",        17 => "nonui",
         18 => "debug-level",     19 => "power-status",
-        20 => "pen",             _  => "?",
+        20 => "pen",             21 => "mode-num",
+        _  => "?",
     }
 }
 
@@ -124,6 +126,7 @@ const ALL_MODES: &[(u16, &str)] = &[
     (12, "resist-rf"),      (13, "idle-time"),       (14, "doubletap"),
     (15, "grip-mode"),      (16, "fod-icon"),        (17, "nonui"),
     (18, "debug-level"),    (19, "power-status"),    (20, "pen"),
+    (21, "mode-num"),
 ];
 
 const DEV_NODE: &str = "/dev/xiaomi-touch\0";
@@ -313,6 +316,86 @@ impl Drop for Device {
     fn drop(&mut self) { unsafe { sys::close(self.fd) }; }
 }
 
+// ─── Added Features (sysfs, daemon, status) ───────────────────────────────────
+
+const SYSFS_NODES: &[&str] = &[
+    "/proc/touchpanel/double_tap",
+    "/sys/class/touch/touch_dev/gesture_control",
+    "/sys/devices/platform/soc/soc:touch/gesture_control",
+];
+
+const SETTING_KEYS: &[&str] = &[
+    "secure oplus_customize_gesture_double_touch",
+    "secure double_tap_to_wake",
+    "system double_touch",
+    "system double_tap_to_wake",
+];
+
+fn sysfs_write(value: &str) {
+    for &node in SYSFS_NODES {
+        if let Ok(mut fd) = std::fs::File::options().write(true).open(node) {
+            use std::io::Write;
+            let _ = fd.write_all(value.as_bytes());
+        }
+    }
+}
+
+fn apply_with_sysfs(dev: &Device, mode: u16, value: i32) -> Result<(), String> {
+    dev.set(mode, value)?;
+    if mode == 14 {
+        sysfs_write(if value > 0 { "1" } else { "0" });
+    }
+    Ok(())
+}
+
+fn get_setting() -> i32 {
+    for &key in SETTING_KEYS {
+        let cmd = format!("settings get {}", key);
+        if let Ok(out) = std::process::Command::new("sh").arg("-c").arg(&cmd).output() {
+            let s = String::from_utf8_lossy(&out.stdout);
+            if s.contains("1") { return 1; }
+            if s.contains("0") { return 0; }
+        }
+    }
+    -1
+}
+
+fn resolve_value(mode: u16, raw: i32) -> i32 {
+    if raw == 1 && mode >= 2 && mode <= 5 {
+        5
+    } else {
+        raw
+    }
+}
+
+fn run_daemon(dev: &Device, mode: u16) {
+    println!("daemon active: mode {}", mode);
+    let mut last = -1;
+    loop {
+        let cur = get_setting();
+        if cur != -1 && cur != last {
+            println!("sync: {}", cur);
+            let val = resolve_value(mode, cur);
+            if let Err(e) = apply_with_sysfs(dev, mode, val) {
+                eprintln!("sync error: {}", e);
+            }
+            last = cur;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+}
+
+fn print_status() {
+    println!("hw support:");
+    let dev_ok = std::path::Path::new("/dev/xiaomi-touch").exists();
+    println!("  /dev/xiaomi-touch: {}", if dev_ok { "ok" } else { "not found" });
+    for &node in SYSFS_NODES {
+        if std::path::Path::new(node).exists() {
+            println!("  node: {}", node);
+        }
+    }
+}
+
 // ─── CLI ──────────────────────────────────────────────────────────────────────
 
 fn usage() {
@@ -342,13 +425,17 @@ Subcommands:
   mode-val <mode>                Get full mode array (getModeAll)
   reset    <mode>                Reset to default
   long     <mode> <v0> [v1...]   Set multiple values (SET_LONG_VALUE)
-  dump                           Read cur/def/min/max for all 21 modes
+  dump                           Read cur/def/min/max for all 22 modes
+  status                         Check hardware availability
+  daemon   <mode>                Sync with settings (polling)
+  --e      <mode>                Enable/set value (uses resolve_value)
+  --d      <mode>                Disable/reset
   ioctl-codes                    Print computed ioctl request numbers
 
-Named modes (or raw integer 0-20):
+Named modes (or raw integer 0-21):
   game  active  up-threshold  tolerance  aim  tap  expert  edge
   orientation  rate  fod  aod  resist-rf  idle-time  doubletap
-  grip  fod-icon  nonui  debug-level  power-status  pen
+  grip  fod-icon  nonui  debug-level  power-status  pen  mode-num
 
 Examples:
   xiaomi-touch set game 1
@@ -437,6 +524,7 @@ fn main() {
 
     match sub.as_str() {
         "ioctl-codes" => { print_ioctl_codes(); return; }
+        "status" => { print_status(); return; }
         "detect" => {
             let v = Version::detect(touch_id);
             println!("Detected: {:?}", v);
@@ -456,7 +544,7 @@ fn main() {
         "set" => {
             let mode  = req_mode(&args, i);
             let value = req_i32(&args, i+1, "value");
-            dev.set(mode, value).unwrap_or_else(|e| die(e));
+            apply_with_sysfs(&dev, mode, value).unwrap_or_else(|e| die(e));
             println!("OK  mode={}({})  value={}", mode, mode_name(mode), value);
         }
         "get"  => { println!("{}", dev.get(req_mode(&args,i), Cmd::GetCurValue).unwrap_or_else(|e| die(e))); }
@@ -495,6 +583,22 @@ fn main() {
                 let mx  = dev.get(m, Cmd::GetMaxValue).map(|v| v.to_string()).unwrap_or("-".into());
                 println!("{:<18} {:>4}  {:>8}  {:>8}  {:>8}  {:>8}", name, m, cur, def, mn, mx);
             }
+        }
+        "daemon" => {
+            let mode = if args.len() > i { req_mode(&args, i) } else { 14 };
+            run_daemon(&dev, mode);
+        }
+        "--e" => {
+            let mode = req_mode(&args, i);
+            let val = resolve_value(mode, 1);
+            apply_with_sysfs(&dev, mode, val).unwrap_or_else(|e| die(e));
+            println!("set {}({}) -> {}", mode_name(mode), mode, val);
+        }
+        "--d" => {
+            let mode = req_mode(&args, i);
+            let val = 0;
+            apply_with_sysfs(&dev, mode, val).unwrap_or_else(|e| die(e));
+            println!("set {}({}) -> {}", mode_name(mode), mode, val);
         }
         other => {
             eprintln!("unknown subcommand '{}'\n", other);
