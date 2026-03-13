@@ -242,11 +242,12 @@ fn apply_with_sysfs<P: TouchIoctlProtocol>(dev: &Device<P>, mode: u16, value: i3
 
 fn get_setting() -> i32 {
     for &key in SETTING_KEYS {
-        let cmd = format!("settings get {}", key);
-        if let Ok(out) = std::process::Command::new("sh").arg("-c").arg(&cmd).output() {
-            let s = String::from_utf8_lossy(&out.stdout);
-            if s.contains("1") { return 1; }
-            if s.contains("0") { return 0; }
+        if let Ok(out) = std::process::Command::new("settings").arg("get").arg(key).output() {
+            if let Ok(s) = std::str::from_utf8(&out.stdout) {
+                let s = s.trim();
+                if s == "1" { return 1; }
+                if s == "0" { return 0; }
+            }
         }
     }
     -1
