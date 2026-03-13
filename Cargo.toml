@@ -2,12 +2,23 @@
 name = "xiaomi-touch"
 version = "1.0.0"
 edition = "2021"
-description = "CLI tool to control /dev/xiaomi-touch via ioctl (supports both standard and Marble protocol)"
-authors = ["xiaomi-touch-rs"]
+description = "CLI tool to control /dev/xiaomi-touch via ioctl"
+
+[lib]
+name = "xiaomi_touch_core"
+path = "src/lib.rs"
 
 [[bin]]
-name = "xiaomi-touch"
-path = "src/main.rs"
+name = "xiaomi-touch-v1"
+path = "src/bin/v1.rs"
+
+[[bin]]
+name = "xiaomi-touch-v2"
+path = "src/bin/v2.rs"
+
+[[bin]]
+name = "xiaomi-touch-v3"
+path = "src/bin/v3.rs"
 
 [profile.release]
 strip = true

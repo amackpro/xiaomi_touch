@@ -28,30 +28,30 @@ const CMD_GET_MAX:  u64 = 4;
 const CMD_GET_MODE: u64 = 5;
 const CMD_RESET:    u64 = 6;
 const CMD_SET_LONG: u64 = 7;
-const BUF_BYTES: u64 = 1024; 
-const fn req1024(nr: u64) -> u64 { ioc(IOC_READ | IOC_WRITE, TOUCH_MAGIC, nr, BUF_BYTES) }
+pub const BUF_BYTES: u64 = 1024; 
+pub const fn req1024(nr: u64) -> u64 { ioc(IOC_READ | IOC_WRITE, TOUCH_MAGIC, nr, BUF_BYTES) }
 
-const REQ_SET_CUR:  u64 = req1024(CMD_SET_CUR);
-const REQ_GET_CUR:  u64 = req1024(CMD_GET_CUR);
-const REQ_GET_DEF:  u64 = req1024(CMD_GET_DEF);
-const REQ_GET_MIN:  u64 = req1024(CMD_GET_MIN);
-const REQ_GET_MAX:  u64 = req1024(CMD_GET_MAX);
-const REQ_GET_MODE: u64 = req1024(CMD_GET_MODE);
-const REQ_RESET:    u64 = req1024(CMD_RESET);
-const REQ_SET_LONG: u64 = req1024(CMD_SET_LONG);
+pub const REQ_SET_CUR:  u64 = req1024(CMD_SET_CUR);
+pub const REQ_GET_CUR:  u64 = req1024(CMD_GET_CUR);
+pub const REQ_GET_DEF:  u64 = req1024(CMD_GET_DEF);
+pub const REQ_GET_MIN:  u64 = req1024(CMD_GET_MIN);
+pub const REQ_GET_MAX:  u64 = req1024(CMD_GET_MAX);
+pub const REQ_GET_MODE: u64 = req1024(CMD_GET_MODE);
+pub const REQ_RESET:    u64 = req1024(CMD_RESET);
+pub const REQ_SET_LONG: u64 = req1024(CMD_SET_LONG);
 
-const SZ_BUF1024: usize = 1024;
+pub const SZ_BUF1024: usize = 1024;
 
-const V3_SELECT_TOUCH_ID: u64 = ioc(IOC_NONE,            TOUCH_MAGIC, 3,   0);
-const V3_COMMON_DATA:     u64 = ioc(IOC_READ | IOC_WRITE, TOUCH_MAGIC, 0, 520);
-const V3_HARDWARE_PARAM:  u64 = ioc(IOC_READ,             TOUCH_MAGIC, 1, 214);
+pub const V3_SELECT_TOUCH_ID: u64 = ioc(IOC_NONE,            TOUCH_MAGIC, 3,   0);
+pub const V3_COMMON_DATA:     u64 = ioc(IOC_READ | IOC_WRITE, TOUCH_MAGIC, 0, 520);
+pub const V3_HARDWARE_PARAM:  u64 = ioc(IOC_READ,             TOUCH_MAGIC, 1, 214);
 
-const SZ_V3_BUF: usize = 520;
+pub const SZ_V3_BUF: usize = 520;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(u64)]
 #[allow(dead_code)]
-enum Cmd {
+pub enum Cmd {
     SetCurValue  = CMD_SET_CUR,
     GetCurValue  = CMD_GET_CUR,
     GetDefValue  = CMD_GET_DEF,
@@ -63,8 +63,8 @@ enum Cmd {
 }
 
 impl Cmd {
-    #[inline] fn nr(self) -> u64      { self as u64 }
-    #[inline] fn req(self) -> u64     { req1024(self.nr()) }
+    #[inline] pub fn nr(self) -> u64      { self as u64 }
+    #[inline] pub fn req(self) -> u64     { req1024(self.nr()) }
 }
 
 fn parse_mode(s: &str) -> Result<u16, String> {
@@ -132,7 +132,7 @@ const ALL_MODES: &[(u16, &str)] = &[
 const DEV_NODE: &str = "/dev/xiaomi-touch\0";
 
 #[allow(non_camel_case_types)]
-mod sys {
+pub mod sys {
     pub type c_int   = i32;
     pub type c_ulong = u64;
     extern "C" {
@@ -147,7 +147,7 @@ mod sys {
 }
 
 #[inline]
-fn errno() -> i32 {
+pub fn errno() -> i32 {
     unsafe {
         #[cfg(not(target_os = "android"))]  { *sys::__errno_location() }
         #[cfg(target_os = "android")]       { *sys::__errno() }
@@ -163,156 +163,48 @@ fn open_dev() -> Result<i32, String> {
     }
 }
 
-#[inline] fn pu16(b: &mut [u8], o: usize, v: u16) { b[o] = v as u8; b[o+1] = (v>>8) as u8; }
-#[inline] fn pi32(b: &mut [u8], o: usize, v: i32) { b[o..o+4].copy_from_slice(&v.to_le_bytes()); }
-#[inline] fn gi32(b: &[u8],     o: usize) -> i32  { i32::from_le_bytes([b[o],b[o+1],b[o+2],b[o+3]]) }
+#[inline] pub fn pu16(b: &mut [u8], o: usize, v: u16) { b[o] = v as u8; b[o+1] = (v>>8) as u8; }
+#[inline] pub fn pi32(b: &mut [u8], o: usize, v: i32) { b[o..o+4].copy_from_slice(&v.to_le_bytes()); }
+#[inline] pub fn gi32(b: &[u8],     o: usize) -> i32  { i32::from_le_bytes([b[o],b[o+1],b[o+2],b[o+3]]) }
 
-fn v1_ioctl(fd: i32, req: u64, mode: u16, extra: &[i32]) -> Result<[u8; SZ_BUF1024], String> {
-    let mut buf = [0u8; SZ_BUF1024];
-    pi32(&mut buf, 0, mode as i32);
-    for (i, &v) in extra.iter().take(255).enumerate() {
-        pi32(&mut buf, 4 + i * 4, v);
+pub trait TouchIoctlProtocol {
+    fn set(&self, fd: i32, touch_id: u32, mode: u16, value: i32) -> Result<(), String>;
+    fn get(&self, fd: i32, touch_id: u32, mode: u16, cmd: Cmd) -> Result<i32, String>;
+    fn get_mode_all(&self, fd: i32, touch_id: u32, mode: u16) -> Result<[i32; 6], String>;
+    fn reset(&self, fd: i32, touch_id: u32, mode: u16) -> Result<(), String>;
+    fn set_long(&self, fd: i32, touch_id: u32, mode: u16, values: &[i32]) -> Result<(), String>;
+    fn print_specific_ioctl_codes(&self);
+}
+
+struct Device<'a, P: TouchIoctlProtocol> { fd: i32, touch_id: u32, protocol: &'a P }
+
+impl<'a, P: TouchIoctlProtocol> Device<'a, P> {
+    fn open(touch_id: u32, protocol: &'a P) -> Result<Self, String> {
+        Ok(Device { fd: open_dev()?, touch_id, protocol })
     }
-    let rc = unsafe { sys::ioctl(fd, req, buf.as_mut_ptr()) };
-    if rc < 0 { Err(format!("V1 ioctl req=0x{:08x} mode={} errno={}", req, mode, errno())) }
-    else       { Ok(buf) }
-}
-
-fn v2_ioctl(fd: i32, req: u64, touch_id: i32, mode: u16, extra: &[i32]) -> Result<[u8; SZ_BUF1024], String> {
-    let mut buf = [0u8; SZ_BUF1024];
-    pi32(&mut buf, 0, touch_id);
-    pi32(&mut buf, 4, mode as i32);
-    for (i, &v) in extra.iter().take(254).enumerate() {
-        pi32(&mut buf, 8 + i * 4, v);
-    }
-    let rc = unsafe { sys::ioctl(fd, req, buf.as_mut_ptr()) };
-    if rc < 0 { Err(format!("V2 ioctl req=0x{:08x} mode={} errno={}", req, mode, errno())) }
-    else       { Ok(buf) }
-}
-
-fn v3_select(fd: i32, touch_id: u32) -> Result<(), String> {
-    let rc = unsafe { sys::ioctl(fd, V3_SELECT_TOUCH_ID, touch_id as sys::c_ulong) };
-    if rc < 0 { Err(format!("V3 SELECT_TOUCH_ID errno={}", errno())) }
-    else       { Ok(()) }
-}
-
-fn v3_common_data(fd: i32, touch_id: u8, cmd: Cmd, mode: u16, values: &[i32]) -> Result<[u8; SZ_V3_BUF], String> {
-    let mut buf = [0u8; SZ_V3_BUF];
-    buf[0] = touch_id;
-    buf[1] = cmd.nr() as u8;
-    pu16(&mut buf, 2, mode);
-    pu16(&mut buf, 4, values.len().min(128) as u16);
-    for (i, &v) in values.iter().take(128).enumerate() { pi32(&mut buf, 8 + i*4, v); }
-    let rc = unsafe { sys::ioctl(fd, V3_COMMON_DATA, buf.as_mut_ptr()) };
-    if rc < 0 { Err(format!("V3 COMMON_DATA cmd={:?} mode={} errno={}", cmd, mode, errno())) }
-    else       { Ok(buf) }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Version { V1, V2, V3 }
-
-impl Version {
-    fn detect(touch_id: u32) -> Self {
-        let fd = match open_dev() { Ok(fd) => fd, Err(_) => return Version::V2 };
-        let rc = unsafe { sys::ioctl(fd, V3_SELECT_TOUCH_ID, touch_id as sys::c_ulong) };
-        unsafe { sys::close(fd) };
-        if rc == 0 { Version::V3 } else { Version::V2 }
-    }
-}
-
-struct Device { fd: i32, touch_id: u32, version: Version }
-
-impl Device {
-    fn open(touch_id: u32, version: Version) -> Result<Self, String> {
-        Ok(Device { fd: open_dev()?, touch_id, version })
-    }
-
+    
     fn set(&self, mode: u16, value: i32) -> Result<(), String> {
-        match self.version {
-            Version::V1 => { v1_ioctl(self.fd, REQ_SET_CUR, mode, &[value])?; }
-            Version::V2 => { v2_ioctl(self.fd, REQ_SET_CUR, self.touch_id as i32, mode, &[value])?; }
-            Version::V3 => {
-                v3_select(self.fd, self.touch_id)?;
-                v3_common_data(self.fd, self.touch_id as u8, Cmd::SetCurValue, mode, &[value])?;
-            }
-        }
-        Ok(())
+        self.protocol.set(self.fd, self.touch_id, mode, value)
     }
 
     fn get(&self, mode: u16, cmd: Cmd) -> Result<i32, String> {
-        match self.version {
-            Version::V1 => {
-                let buf = v1_ioctl(self.fd, cmd.req(), mode, &[])?;
-                Ok(gi32(&buf, 0))
-            }
-            Version::V2 => {
-                let buf = v2_ioctl(self.fd, cmd.req(), self.touch_id as i32, mode, &[])?;
-                Ok(gi32(&buf, 0))
-            }
-            Version::V3 => {
-                v3_select(self.fd, self.touch_id)?;
-                let buf = v3_common_data(self.fd, self.touch_id as u8, cmd, mode, &[0])?;
-                Ok(gi32(&buf, 8))
-            }
-        }
+        self.protocol.get(self.fd, self.touch_id, mode, cmd)
     }
 
     fn get_mode_all(&self, mode: u16) -> Result<[i32; 6], String> {
-        let mut out = [0i32; 6];
-        match self.version {
-            Version::V1 => {
-                let buf = v1_ioctl(self.fd, REQ_GET_MODE, mode, &[])?;
-                for i in 0..6 { out[i] = gi32(&buf, i * 4); }
-            }
-            Version::V2 => {
-                let buf = v2_ioctl(self.fd, REQ_GET_MODE, self.touch_id as i32, mode, &[])?;
-                for i in 0..6 { out[i] = gi32(&buf, i * 4); }
-            }
-            Version::V3 => {
-                v3_select(self.fd, self.touch_id)?;
-                let buf = v3_common_data(self.fd, self.touch_id as u8, Cmd::GetModeValue, mode, &[0])?;
-                for i in 0..6 { out[i] = gi32(&buf, 8 + i * 4); }
-            }
-        }
-        Ok(out)
+        self.protocol.get_mode_all(self.fd, self.touch_id, mode)
     }
 
     fn reset(&self, mode: u16) -> Result<(), String> {
-        match self.version {
-            Version::V1 => { v1_ioctl(self.fd, REQ_RESET, mode, &[])?; }
-            Version::V2 => { v2_ioctl(self.fd, REQ_RESET, self.touch_id as i32, mode, &[])?; }
-            Version::V3 => {
-                v3_select(self.fd, self.touch_id)?;
-                v3_common_data(self.fd, self.touch_id as u8, Cmd::ResetMode, mode, &[0])?;
-            }
-        }
-        Ok(())
+        self.protocol.reset(self.fd, self.touch_id, mode)
     }
 
     fn set_long(&self, mode: u16, values: &[i32]) -> Result<(), String> {
-        match self.version {
-            Version::V1 => {
-                let count = values.len().min(254);
-                let mut extra = vec![count as i32];
-                extra.extend_from_slice(&values[..count]);
-                v1_ioctl(self.fd, REQ_SET_LONG, mode, &extra)?;
-            }
-            Version::V2 => {
-                let count = values.len().min(253);
-                let mut extra = vec![count as i32];
-                extra.extend_from_slice(&values[..count]);
-                v2_ioctl(self.fd, REQ_SET_LONG, self.touch_id as i32, mode, &extra)?;
-            }
-            Version::V3 => {
-                v3_select(self.fd, self.touch_id)?;
-                v3_common_data(self.fd, self.touch_id as u8, Cmd::SetLongValue, mode, values)?;
-            }
-        }
-        Ok(())
+        self.protocol.set_long(self.fd, self.touch_id, mode, values)
     }
 }
 
-impl Drop for Device {
+impl<'a, P: TouchIoctlProtocol> Drop for Device<'a, P> {
     fn drop(&mut self) { unsafe { sys::close(self.fd) }; }
 }
 
@@ -340,7 +232,7 @@ fn sysfs_write(value: &str) {
     }
 }
 
-fn apply_with_sysfs(dev: &Device, mode: u16, value: i32) -> Result<(), String> {
+fn apply_with_sysfs<P: TouchIoctlProtocol>(dev: &Device<P>, mode: u16, value: i32) -> Result<(), String> {
     dev.set(mode, value)?;
     if mode == 14 {
         sysfs_write(if value > 0 { "1" } else { "0" });
@@ -368,7 +260,7 @@ fn resolve_value(mode: u16, raw: i32) -> i32 {
     }
 }
 
-fn run_daemon(dev: &Device, mode: u16) {
+fn run_daemon<P: TouchIoctlProtocol>(dev: &Device<P>, mode: u16) {
     println!("daemon active: mode {}", mode);
     let mut last = -1;
     loop {
@@ -398,23 +290,16 @@ fn print_status() {
 
 // ─── CLI ──────────────────────────────────────────────────────────────────────
 
-fn usage() {
+fn usage(detect_binary: &str) {
     eprintln!(
-r#"xiaomi-touch — /dev/xiaomi-touch ioctl controller
+r#"{bin} — /dev/xiaomi-touch ioctl controller
 
 Usage:
-  xiaomi-touch [OPTIONS] <subcommand> [args...]
+  {bin} [OPTIONS] <subcommand> [args...]
 
 Options:
-  --v1              Force V1 (sm8250 era — buf[0]=mode, no touch_id)
-  --v2              Force V2 (marble era  — buf[0]=touch_id)
-  --v3              Force V3 (peridot era — common_data_t + SELECT_TOUCH_ID)
-  --touch-id N      Panel index (default: 0; not used in V1)
-  --detect          Detect version + print ioctl codes, then exit
+  --touch-id N      Panel index (default: 0)
   -h / --help       Show this help
-
-  Note: V1 and V2 share identical ioctl codes. Auto-detection always
-  returns V2 or V3. Use --v1 explicitly on sm8250 devices (Mi 10, Poco X3...).
 
 Subcommands:
   set      <mode> <value>        Set current value
@@ -438,13 +323,11 @@ Named modes (or raw integer 0-21):
   grip  fod-icon  nonui  debug-level  power-status  pen  mode-num
 
 Examples:
-  xiaomi-touch set game 1
-  xiaomi-touch --v1 set game 1        # sm8250 (no touch_id in buffer)
-  xiaomi-touch --v3 --touch-id 1 set rate 1
-  xiaomi-touch get doubletap
-  xiaomi-touch mode-val game          # prints: cur= def= min= max= ext0= ext1=
-  xiaomi-touch dump
-  xiaomi-touch --detect"#
+  {bin} set game 1
+  {bin} get doubletap
+  {bin} mode-val game          # prints: cur= def= min= max= ext0= ext1=
+  {bin} dump"#,
+      bin=detect_binary
     );
 }
 
@@ -484,18 +367,14 @@ fn req_i32(args: &[String], idx: usize, label: &str) -> i32 {
     }
 }
 
-fn main() {
+pub fn run_cli(protocol: impl TouchIoctlProtocol) {
     let args: Vec<String> = env::args().collect();
-    let mut version_override: Option<Version> = None;
+    let bin_name = args.get(0).map(|s| s.as_str()).unwrap_or("xiaomi-touch");
     let mut touch_id: u32 = 0;
-    let mut detect_only = false;
     let mut i = 1usize;
 
     while i < args.len() {
         match args[i].as_str() {
-            "--v1"          => { version_override = Some(Version::V1); i += 1; }
-            "--v2"          => { version_override = Some(Version::V2); i += 1; }
-            "--v3"          => { version_override = Some(Version::V3); i += 1; }
             "--touch-id"    => {
                 i += 1;
                 touch_id = args.get(i)
@@ -503,42 +382,25 @@ fn main() {
                     .unwrap_or_else(|| die("--touch-id needs a non-negative integer".into()));
                 i += 1;
             }
-            "--detect"      => { detect_only = true; i += 1; }
-            "--help" | "-h" => { usage(); return; }
+            "--help" | "-h" => { usage(bin_name); return; }
             _               => break,
         }
     }
 
-    if detect_only {
-        let v = Version::detect(touch_id);
-        println!("Detected: {:?}", v);
-        println!("(V1 vs V2 cannot be auto-detected — use --v1 on sm8250 devices)");
-        print_ioctl_codes();
-        return;
-    }
-
     let sub = match args.get(i) {
         Some(s) => { let s = s.clone(); i += 1; s }
-        None    => { usage(); std::process::exit(1); }
+        None    => { usage(bin_name); std::process::exit(1); }
     };
 
     match sub.as_str() {
-        "ioctl-codes" => { print_ioctl_codes(); return; }
+        "ioctl-codes" => { protocol.print_specific_ioctl_codes(); return; }
         "status" => { print_status(); return; }
-        "detect" => {
-            let v = Version::detect(touch_id);
-            println!("Detected: {:?}", v);
-            println!("(V1 vs V2 cannot be auto-detected — use --v1 on sm8250 devices)");
-            print_ioctl_codes();
-            return;
-        }
         _ => {}
     }
 
-    let version = version_override.unwrap_or_else(|| Version::detect(touch_id));
-    eprintln!("driver={:?}  touch_id={}", version, touch_id);
+    eprintln!("driver={}  touch_id={}", bin_name, touch_id);
 
-    let dev = Device::open(touch_id, version).unwrap_or_else(|e| die(e));
+    let dev = Device::open(touch_id, &protocol).unwrap_or_else(|e| die(e));
 
     match sub.as_str() {
         "set" => {
@@ -602,7 +464,7 @@ fn main() {
         }
         other => {
             eprintln!("unknown subcommand '{}'\n", other);
-            usage();
+            usage(bin_name);
             std::process::exit(1);
         }
     }
